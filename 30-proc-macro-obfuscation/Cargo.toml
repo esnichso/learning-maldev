@@ -1,0 +1,17 @@
+[package]
+name = "proc-macro-obfuscation"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+encrypt-macro = { path = "../30-encrypt-macro" }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

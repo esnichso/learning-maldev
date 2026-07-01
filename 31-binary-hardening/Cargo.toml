@@ -1,0 +1,20 @@
+[package]
+name = "binary-hardening"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+] }
+
+# Apply these settings one by one (steps 2-6 in the README) and measure
+# binary size after each. The final state below has all settings active.
+
+[profile.release]
+opt-level = "z"        # optimize for size, not speed
+lto = true             # link-time optimization — dead-code elimination across crates
+codegen-units = 1      # single codegen unit enables better whole-program optimization
+panic = "abort"        # no unwinding machinery; saves ~10-20 KB
+strip = true           # strip debug symbols and section names from the output
